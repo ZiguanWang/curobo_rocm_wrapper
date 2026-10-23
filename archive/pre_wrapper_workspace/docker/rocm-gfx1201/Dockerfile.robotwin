@@ -1,0 +1,36 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+ARG BASE_IMAGE=curobo-rocm-gfx1201:acceptance
+FROM ${BASE_IMAGE}
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        libegl1 \
+        libgl1 \
+        libx11-6 \
+        libxext6 \
+        libxrender1 \
+        mesa-vulkan-drivers \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir \
+    "numpy==1.26.4" \
+    "opencv-python-headless==4.10.0.84" \
+    "transforms3d==0.4.2" \
+    "sapien==3.0.3" \
+    "scipy==1.13.1" \
+    "mplib==0.2.1" \
+    "gymnasium==0.29.1" \
+    "trimesh==4.4.3" \
+    "imageio==2.34.2" \
+    "PyYAML>=6" \
+    "h5py>=3.8" \
+    "websockets>=13.0" \
+    "msgpack>=1.0.8" \
+    "msgpack-numpy>=0.4.8" \
+    "termcolor" \
+    "av" \
+    "matplotlib" \
+    "ffmpeg-python" \
+    "pyglet<2"

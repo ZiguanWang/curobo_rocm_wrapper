@@ -1,0 +1,25 @@
+[wrapper]
+schema = 1
+upstream_url = "https://github.com/NVlabs/curobo.git"
+
+[profiles.v0_8_0]
+submodule_path = "upstream/curobo-v0.8.0"
+tag = "v0.8.0"
+commit = "4ea77366ca48ee453e7df139e39fa6532af49f3b"
+license = "Apache-2.0"
+commercial_distribution = true
+layout = "modern"
+patch_series = "profiles/v0.8.0/series"
+patch_sha256 = "e6a832b1093116cabcb208443fc56ff59ca0f8f5c61b7a901d4c3b0c2f2c33f8"
+test_manifest = "profiles/v0.8.0/tests.toml"
+
+[profiles.v0_7_8]
+submodule_path = "upstream/curobo-v0.7.8"
+tag = "v0.7.8"
+commit = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
+license = "LicenseRef-NVIDIA-cuRobo-v0.7.8"
+commercial_distribution = false
+layout = "legacy-src"
+patch_series = "profiles/v0.7.8/series"
+patch_sha256 = "8574b4d51908738b5f72c7062e1eb3f706150a0dc4fc0c646a6fd1fd80a2661a"
+test_manifest = "profiles/v0.7.8/tests.toml"

@@ -1,0 +1,11 @@
+[migration]
+count = 7
+tests = [
+  "curobo/tests/_src/curobolib/test_hip_kinematics_integration.py",
+  "curobo/tests/_src/curobolib/test_hip_geometry_integration.py",
+  "curobo/tests/_src/curobolib/test_hip_collision_sphere_cuboid.py",
+  "curobo/tests/_src/curobolib/test_hip_tool_pose_integration.py",
+  "curobo/tests/_src/curobolib/test_hip_cspace_cost_integration.py",
+  "curobo/tests/_src/curobolib/test_hip_optimization_integration.py",
+  "curobo/tests/_src/curobolib/test_hip_trajectory_integration.py",
+]
