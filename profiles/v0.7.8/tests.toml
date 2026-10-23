@@ -1,0 +1,11 @@
+[migration]
+count = 7
+tests = [
+  "tests/rocm/test_01_kinematics.py",
+  "tests/rocm/test_02_geometry.py",
+  "tests/rocm/test_03_collision.py",
+  "tests/rocm/test_04_tool_pose.py",
+  "tests/rocm/test_05_cspace.py",
+  "tests/rocm/test_06_optimization.py",
+  "tests/rocm/test_07_trajectory.py",
+]

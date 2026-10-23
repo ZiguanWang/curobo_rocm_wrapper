@@ -1,0 +1,33 @@
+[wrapper]
+schema = 1
+upstream_url = "https://github.com/NVlabs/curobo.git"
+
+[warp_rocm]
+upstream_url = "https://github.com/AMD-Ecosystem/warp.git"
+submodule_path = "upstream/warp-rocm"
+branch = "amd-integration-halo"
+commit = "74014999a31471228e0aaa213bbeb2e5daba95f0"
+patch_series = "profiles/warp/series"
+patch_sha256 = "0a1ee165f214649201f00ca24ed093d3cffae64c2f48621a15e6d165b2a8347d"
+
+[profiles.v0_8_0]
+submodule_path = "upstream/curobo-v0.8.0"
+tag = "v0.8.0"
+commit = "4ea77366ca48ee453e7df139e39fa6532af49f3b"
+license = "Apache-2.0"
+commercial_distribution = true
+layout = "modern"
+patch_series = "profiles/v0.8.0/series"
+patch_sha256 = "089495f877e7d6b1f77331be95ca70e067ad8e8610302291bb6ae89090b6ac4e"
+test_manifest = "profiles/v0.8.0/tests.toml"
+
+[profiles.v0_7_8]
+submodule_path = "upstream/curobo-v0.7.8"
+tag = "v0.7.8"
+commit = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
+license = "LicenseRef-NVIDIA-cuRobo-v0.7.8"
+commercial_distribution = false
+layout = "legacy-src"
+patch_series = "profiles/v0.7.8/series"
+patch_sha256 = "0bcaafb80b5983fd24e195bc52112f90e38bc9bc7729d134ff0be72a8e5b9a2e"
+test_manifest = "profiles/v0.7.8/tests.toml"

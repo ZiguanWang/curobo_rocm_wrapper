@@ -1,0 +1,335 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+name: Accelerator CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: accelerator-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu:
+    name: CPU import and fail-closed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ".[dev]"
+      - name: Run CPU gates
+        run: |
+          pytest -n0 -q \
+            curobo/tests/_src/test_runtime_accelerator.py \
+            curobo/tests/_src/curobolib/test_backend_selection.py \
+            curobo/tests/_src/curobolib/test_hip_runtime_preflight.py \
+            curobo/tests/_src/curobolib/test_hip_backend_loader.py \
+            curobo/tests/test_cuda_regression_summary.py \
+            curobo/tests/test_package_discovery.py \
+            curobo/tests/test_rocm_container_acceptance_summary.py \
+            curobo/tests/test_rocm_release_acceptance.py \
+            curobo/tests/test_robotwin_episode_summary.py \
+            curobo/tests/test_robotwin_mixed_task_soak_summary.py \
+            curobo/tests/test_robotwin_xpolicy_readiness.py
+
+  cuda:
+    name: NVIDIA CUDA and CUDA Graph
+    runs-on: [self-hosted, linux, x64, nvidia-cuda]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install CUDA extension build
+        env:
+          CUROBO_USE_PYBIND: "1"
+        run: python -m pip install -e ".[dev]" --no-build-isolation
+      - name: Verify NVIDIA runtime
+        run: |
+          nvidia-smi
+          python - <<'PY'
+          import json
+          from dataclasses import asdict
+          from pathlib import Path
+
+          from curobo.robotwin import validate_cuda_runtime
+
+          result = validate_cuda_runtime()
+          output = Path("build/cuda_acceptance/core/runtime.json")
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(json.dumps(asdict(result), indent=2, sort_keys=True) + "\n")
+          print(result)
+          PY
+      - name: Run CUDA regression gates
+        run: |
+          pytest -n0 -q \
+            --junitxml=build/cuda_acceptance/core/tests.xml \
+            curobo/tests/_src/curobolib \
+            curobo/tests/_src/util/test_cuda_graph_util.py \
+            curobo/tests/_src/motion
+      - name: Upload CUDA core evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-core-${{ github.run_id }}
+          path: build/cuda_acceptance/core
+
+  rocm:
+    name: AMD ROCm gfx1201
+    runs-on: [self-hosted, linux, x64, amd-rocm, gfx1201]
+    timeout-minutes: 180
+    env:
+      CUROBO_USE_HIP: "1"
+      CUROBO_KERNEL_BACKEND: hip
+      PYTORCH_ROCM_ARCH: gfx1201
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify ROCm runtime
+        run: |
+          rocminfo | grep -m1 gfx1201
+          python -m curobo._src.curobolib.backends.hip_backend.runtime_preflight
+      - name: Build and install HIP extensions
+        run: python -m pip install -e ".[dev]" --no-build-isolation
+      - name: Run ROCm kernel and planner gates
+        run: |
+          mapfile -t motion_tests < <(
+            find curobo/tests/_src/motion \
+              -maxdepth 1 \
+              -name 'test_*.py' \
+              ! -name 'test_motion_planner_esdf.py' \
+              -print \
+              | sort
+          )
+          pytest -n0 -q \
+            curobo/tests/_src/curobolib/test_hip_kinematics_integration.py \
+            curobo/tests/_src/curobolib/test_hip_geometry_integration.py \
+            curobo/tests/_src/curobolib/test_hip_collision_sphere_cuboid.py \
+            curobo/tests/_src/curobolib/test_hip_tool_pose_integration.py \
+            curobo/tests/_src/curobolib/test_hip_cspace_cost_integration.py \
+            curobo/tests/_src/curobolib/test_hip_optimization_integration.py \
+            curobo/tests/_src/curobolib/test_hip_trajectory_integration.py \
+            "${motion_tests[@]}"
+
+  candidate-run-evidence:
+    name: Candidate CUDA and ROCm run evidence
+    if: always()
+    needs: [cuda, rocm]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write immutable run evidence
+        env:
+          CUDA_RESULT: ${{ needs.cuda.result }}
+          ROCM_RESULT: ${{ needs.rocm.result }}
+        run: |
+          mkdir -p build/ci_history
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          evidence = {
+              "workflow_run_id": "${{ github.run_id }}",
+              "workflow_run_attempt": "${{ github.run_attempt }}",
+              "revision": "${{ github.sha }}",
+              "completed_at": datetime.now(timezone.utc).isoformat(),
+              "cuda_passed": os.environ["CUDA_RESULT"] == "success",
+              "rocm_passed": os.environ["ROCM_RESULT"] == "success",
+              "source_url": (
+                  "${{ github.server_url }}/${{ github.repository }}/actions/runs/"
+                  "${{ github.run_id }}"
+              ),
+          }
+          path = Path("build/ci_history/candidate_run.json")
+          path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+          print(path.read_text())
+          PY
+      - name: Upload candidate run evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-run-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/ci_history/candidate_run.json
+
+  rocm-acceptance:
+    name: Scheduled ROCm acceptance
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64, amd-rocm, gfx1201, robotwin]
+    timeout-minutes: 720
+    env:
+      CUROBO_USE_HIP: "1"
+      CUROBO_KERNEL_BACKEND: hip
+      PYTORCH_ROCM_ARCH: gfx1201
+      ROBOTWIN_ROOT: ${{ vars.ROBOTWIN_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install HIP build
+        run: python -m pip install -e ".[dev]" --no-build-isolation
+      - name: Run primitive soak
+        run: |
+          mkdir -p build/rocm_acceptance/ci
+          python benchmark/rocm_motion_soak.py \
+            --iterations 1000 \
+            --output build/rocm_acceptance/ci/primitive_soak.json
+      - name: Run frozen RoboTwin development set
+        run: |
+          test -n "${ROBOTWIN_ROOT}"
+          for seed in 0 1 2 3; do
+            python benchmark/robotwin_rocm_episode.py \
+              --robotwin-root "${ROBOTWIN_ROOT}" \
+              --task stack_blocks_two \
+              --seed "${seed}" \
+              --output "build/rocm_acceptance/ci/stack_blocks_two_seed${seed}.json"
+          done
+          python benchmark/robotwin_rocm_episode_summary.py \
+            build/rocm_acceptance/ci/stack_blocks_two_seed*.json \
+            --minimum-success-rate 1.0 \
+            --output build/rocm_acceptance/ci/stack_blocks_two_summary.json
+      - name: Run frozen RoboTwin extended set
+        run: |
+          for seed in 0 1 2 3; do
+            output="build/rocm_acceptance/ci/stack_blocks_three_seed${seed}.json"
+            python benchmark/robotwin_rocm_episode.py \
+              --robotwin-root "${ROBOTWIN_ROOT}" \
+              --task stack_blocks_three \
+              --seed "${seed}" \
+              --output "${output}" \
+              || test -s "${output}"
+          done
+          python benchmark/robotwin_rocm_episode_summary.py \
+            build/rocm_acceptance/ci/stack_blocks_three_seed*.json \
+            --minimum-success-rate 1.0 \
+            --output build/rocm_acceptance/ci/stack_blocks_three_summary.json
+      - name: Summarize frozen mixed-task soak
+        if: always()
+        run: |
+          python benchmark/robotwin_mixed_task_soak_summary.py \
+            build/rocm_acceptance/ci/stack_blocks_two_seed*.json \
+            build/rocm_acceptance/ci/stack_blocks_three_seed*.json \
+            --minimum-tasks 2 \
+            --minimum-episodes 8 \
+            --output build/rocm_acceptance/ci/mixed_task_soak_summary.json
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm-acceptance-${{ github.run_id }}
+          path: build/rocm_acceptance/ci
+
+  cuda-robotwin-acceptance:
+    name: Scheduled CUDA RoboTwin baseline
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64, nvidia-cuda, robotwin]
+    timeout-minutes: 720
+    env:
+      CUROBO_KERNEL_BACKEND: cuda
+      ROBOTWIN_ROOT: ${{ vars.ROBOTWIN_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install CUDA build
+        env:
+          CUROBO_USE_PYBIND: "1"
+        run: python -m pip install -e ".[dev]" --no-build-isolation
+      - name: Verify CUDA runtime
+        run: |
+          nvidia-smi
+          python - <<'PY'
+          from curobo.robotwin import validate_cuda_runtime
+
+          print(validate_cuda_runtime())
+          PY
+      - name: Prepare frozen dual-backend RoboTwin adapter
+        run: |
+          test -n "${ROBOTWIN_ROOT}"
+          python benchmark/robotwin_rocm_prepare.py \
+            --robotwin-root "${ROBOTWIN_ROOT}" \
+            --apply
+      - name: Run frozen CUDA RoboTwin baseline
+        run: |
+          mkdir -p build/cuda_acceptance/ci
+          for seed in 0 1 2 3; do
+            output="build/cuda_acceptance/ci/stack_blocks_two_seed${seed}.json"
+            python benchmark/robotwin_rocm_episode.py \
+              --robotwin-root "${ROBOTWIN_ROOT}" \
+              --required-accelerator cuda \
+              --task stack_blocks_two \
+              --seed "${seed}" \
+              --output "${output}" \
+              || test -s "${output}"
+          done
+          python benchmark/robotwin_rocm_episode_summary.py \
+            build/cuda_acceptance/ci/stack_blocks_two_seed*.json \
+            --accelerator cuda \
+            --backend cuda \
+            --minimum-success-rate 1.0 \
+            --output build/cuda_acceptance/ci/stack_blocks_two_summary.json
+      - name: Upload CUDA acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-robotwin-acceptance-${{ github.run_id }}
+          path: build/cuda_acceptance/ci
+
+  cuda-regression-summary:
+    name: CUDA versus ROCm release summary
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [cuda, rocm-acceptance, cuda-robotwin-acceptance]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download CUDA core evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: cuda-core-${{ github.run_id }}
+          path: build/cuda_acceptance/core
+      - name: Download CUDA RoboTwin evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: cuda-robotwin-acceptance-${{ github.run_id }}
+          path: build/cuda_acceptance/robotwin
+      - name: Download ROCm RoboTwin evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: rocm-acceptance-${{ github.run_id }}
+          path: build/rocm_acceptance/robotwin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build CUDA regression decision
+        run: |
+          python benchmark/cuda_regression_summary.py \
+            --runtime build/cuda_acceptance/core/runtime.json \
+            --junit build/cuda_acceptance/core/tests.xml \
+            --cuda-episodes build/cuda_acceptance/robotwin/stack_blocks_two_summary.json \
+            --rocm-episodes build/rocm_acceptance/robotwin/stack_blocks_two_summary.json \
+            --output build/release/cuda_regression_summary.json
+      - name: Upload CUDA regression summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-regression-summary-${{ github.run_id }}
+          path: build/release/cuda_regression_summary.json
